@@ -3,14 +3,16 @@ export interface ProjectConfig {
   repo: string
   main_branch: string
   branch_prefix: string
-  base_dir: string
+  setup?: string[]
 }
 
 export interface AgentConfig {
   id: string
-  path: string
+  base_dir: string
   capabilities: string[]
   setup?: string[]
+  // Computed at load time: project name → clone path
+  projects: Record<string, string>
 }
 
 export interface PoolConfig {
@@ -29,16 +31,51 @@ export interface DefaultsConfig {
   poll_interval: number
   max_turns: number
   max_budget_usd: number
+  allowed_tools?: string[]
+  disallowed_tools?: string[]
+  permission_mode?: string
 }
 
-export interface HenryConfig {
-  project: ProjectConfig
+export interface HankConfig {
+  projects: Record<string, ProjectConfig>
+  base_dir: string
   defaults: DefaultsConfig
   agents: Record<string, AgentConfig>
   pools: Record<string, PoolConfig>
   cli: Record<string, CliToolConfig>
   setup?: string[]
   fallback_order: string[]
+}
+
+// Per-role instructions + skills (used in both global and project configs)
+export interface RoleConfig {
+  instructions?: string
+  skills?: string[]               // paths to skill files (markdown)
+  allowed_tools?: string[]
+  disallowed_tools?: string[]
+}
+
+// .hank.yml in each target repo
+export interface HankProjectMeta {
+  instructions?: string           // injected for all agents on this project
+  roles?: Record<string, RoleConfig>
+  skills?: string[]               // global skills loaded for all roles
+  setup?: string[]
+}
+
+// ~/.hank/config.yml
+export interface HankGlobalMeta {
+  instructions?: string
+  roles?: Record<string, RoleConfig>
+  skills?: string[]
+}
+
+export interface PrereqResult {
+  name: string
+  found: boolean
+  version?: string
+  authenticated?: boolean
+  message?: string
 }
 
 export interface InnerLoopConfig {
@@ -53,6 +90,9 @@ export interface StageConfig {
   model?: string
   max_budget_usd?: number
   max_turns?: number
+  allowed_tools?: string[]      // tools allowed without prompting
+  disallowed_tools?: string[]   // tools completely removed from context
+  permission_mode?: string      // default | plan | bypassPermissions
   transitions: Record<string, string>
   inner_loop?: InnerLoopConfig
 }
@@ -76,6 +116,7 @@ export interface RunResult {
 export interface WorkItem {
   id: string
   title: string
+  project: string   // which project/repo this item targets
   source: string
   created: string
   branch: string
@@ -84,7 +125,7 @@ export interface WorkItem {
   attempt: number
   history: string
   assignee: string
-  parent?: string  // id of parent item if this was split from one
+  parent?: string
 }
 
 export interface AgentStatus {

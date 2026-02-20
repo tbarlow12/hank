@@ -3,13 +3,13 @@ import { program } from 'commander'
 import { init } from './init.js'
 
 program
-  .name('henry')
+  .name('hank')
   .description('AI CLI agent orchestration framework')
   .version('0.1.0')
 
 program
   .command('init')
-  .description('Clone repos, run setup, create pipeline directories')
+  .description('Interactive setup wizard — configure repos, agents, clone, and bootstrap')
   .action(async () => {
     try {
       await init()
@@ -17,6 +17,18 @@ program
       console.error('Init failed:', e.message)
       process.exit(1)
     }
+  })
+
+program
+  .command('doctor')
+  .description('Check prerequisites and environment')
+  .action(async () => {
+    const { checkPrerequisites, printPrerequisites, getEnvironmentNotes } = await import('./prerequisites.js')
+    const ok = printPrerequisites(checkPrerequisites())
+    console.log()
+    for (const line of getEnvironmentNotes()) console.log(`  ${line}`)
+    console.log()
+    process.exit(ok ? 0 : 1)
   })
 
 program

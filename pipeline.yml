@@ -4,8 +4,13 @@ stages:
     pool: planners
     model: opus
     max_budget_usd: 10
+    permission_mode: plan
+    disallowed_tools:              # in addition to defaults
+      - Edit
+      - Write
     transitions:
       PASS: plans
+      SPLIT: plans
       FAIL: failed
 
   plans:
@@ -13,14 +18,24 @@ stages:
     pool: planners
     model: opus
     max_budget_usd: 10
+    permission_mode: plan
+    disallowed_tools:
+      - Edit
+      - Write
     transitions:
       PASS: review
+      SPLIT: review
       FAIL: failed
 
   review:
     prompt: agents/reviewer.md
     pool: reviewers
     model: opus
+    permission_mode: plan
+    disallowed_tools:
+      - Edit
+      - Write
+      - NotebookEdit
     transitions:
       PASS: build
       REJECT: plans
@@ -31,6 +46,8 @@ stages:
     pool: builders
     model: sonnet
     max_budget_usd: 8
+    # inherits default disallowed (no push, no rm -rf, no curl)
+    # no additional restrictions — builder needs Edit, Write, Bash
     transitions:
       PASS: test
       FAIL: failed
@@ -43,6 +60,10 @@ stages:
     prompt: agents/tester.md
     pool: testers
     model: sonnet
+    disallowed_tools:
+      - Edit
+      - Write
+      - NotebookEdit
     transitions:
       PASS: code-review
       REJECT: build
@@ -52,6 +73,11 @@ stages:
     prompt: agents/code-reviewer.md
     pool: code-reviewers
     model: opus
+    permission_mode: plan
+    disallowed_tools:
+      - Edit
+      - Write
+      - NotebookEdit
     transitions:
       PASS: draft-pr
       REJECT: build
@@ -60,6 +86,13 @@ stages:
   draft-pr:
     prompt: agents/pr-creator.md
     pool: pr-creators
+    allowed_tools:                 # explicitly allow push for this stage
+      - Bash(git push *)
+      - Bash(gh pr create *)
+    disallowed_tools:
+      - Edit
+      - Write
+      - NotebookEdit
     transitions:
       PASS: done
       FAIL: failed

@@ -59,7 +59,7 @@ function getState(): DashboardState {
       }
     } catch { /* no locks dir */ }
 
-    return { id, path: agent.path, capabilities: agent.capabilities, busy, currentItem }
+    return { id, base_dir: agent.base_dir, capabilities: agent.capabilities, busy, currentItem }
   })
 
   return {

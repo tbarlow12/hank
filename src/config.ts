@@ -1,7 +1,7 @@
-import { readFileSync } from 'fs'
+import { readFileSync, existsSync } from 'fs'
 import { resolve } from 'path'
 import yaml from 'js-yaml'
-import type { HenryConfig, PipelineConfig, AgentConfig } from './types.js'
+import type { HankConfig, PipelineConfig, AgentConfig } from './types.js'
 
 const ROOT = resolve(import.meta.dirname, '..')
 
@@ -14,17 +14,46 @@ function loadYaml<T>(file: string): T {
   return yaml.load(raw) as T
 }
 
-export function loadConfig(): HenryConfig {
-  const raw = loadYaml<any>('henry.yml')
+export function configExists(): boolean {
+  return existsSync(resolve(ROOT, 'hank.yml'))
+}
 
-  // Normalize agents: inject id, expand paths
+export function loadConfig(): HankConfig {
+  const raw = loadYaml<any>('hank.yml')
+
+  const baseDir = expandHome(raw.base_dir || '~/dev/hank-agents')
+  const projectNames = Object.keys(raw.projects || {})
+
+  // Normalize agents: compute clone paths per project
   const agents: Record<string, AgentConfig> = {}
   for (const [id, cfg] of Object.entries(raw.agents as Record<string, any>)) {
-    agents[id] = { id, ...cfg, path: expandHome(cfg.path) }
+    const agentBase = expandHome(cfg.base_dir || `${baseDir}/${id}`)
+    const projects: Record<string, string> = {}
+    for (const projName of projectNames) {
+      projects[projName] = resolve(agentBase, projName)
+    }
+
+    agents[id] = {
+      id,
+      base_dir: agentBase,
+      capabilities: cfg.capabilities || [],
+      setup: cfg.setup,
+      projects,
+    }
   }
 
-  const config: HenryConfig = {
-    project: { ...raw.project, base_dir: expandHome(raw.project.base_dir) },
+  // Normalize projects
+  const projects: Record<string, any> = {}
+  for (const [name, proj] of Object.entries(raw.projects as Record<string, any>)) {
+    projects[name] = {
+      name,
+      ...proj,
+    }
+  }
+
+  const config: HankConfig = {
+    projects,
+    base_dir: baseDir,
     defaults: raw.defaults,
     agents,
     pools: raw.pools,
@@ -43,7 +72,7 @@ export function loadPipeline(): PipelineConfig {
   return pipeline
 }
 
-function validateConfig(config: HenryConfig) {
+function validateConfig(config: HankConfig) {
   const agentIds = new Set(Object.keys(config.agents))
 
   for (const [name, pool] of Object.entries(config.pools)) {
@@ -63,9 +92,13 @@ function validateConfig(config: HenryConfig) {
       }
     }
   }
+
+  if (Object.keys(config.projects).length === 0) {
+    throw new Error('No projects configured. Run `hank init` to set up.')
+  }
 }
 
-export function validatePipeline(pipeline: PipelineConfig, config: HenryConfig) {
+export function validatePipeline(pipeline: PipelineConfig, config: HankConfig) {
   const poolNames = new Set(Object.keys(config.pools))
   const stageNames = new Set(Object.keys(pipeline.stages))
   stageNames.add('done')
@@ -81,6 +114,20 @@ export function validatePipeline(pipeline: PipelineConfig, config: HenryConfig) 
       }
     }
   }
+}
+
+/** Resolve which directory an agent should work in for a given project */
+export function getAgentProjectPath(agent: AgentConfig, projectName: string): string {
+  const p = agent.projects[projectName]
+  if (!p) throw new Error(`Agent "${agent.id}" has no clone for project "${projectName}"`)
+  return p
+}
+
+/** Get the first (or only) project name — convenience for single-project setups */
+export function getDefaultProject(config: HankConfig): string {
+  const names = Object.keys(config.projects)
+  if (names.length === 0) throw new Error('No projects configured')
+  return names[0]
 }
 
 export function getRoot(): string {

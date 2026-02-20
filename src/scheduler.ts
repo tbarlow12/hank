@@ -1,4 +1,4 @@
-import type { HenryConfig, PipelineConfig, AgentConfig } from './types.js'
+import type { HankConfig, PipelineConfig, AgentConfig } from './types.js'
 import { isLocked } from './claim.js'
 
 // Track which agents are currently busy
@@ -7,7 +7,7 @@ const assignments = new Map<string, string>() // agentId → workItemFilename
 export function findAvailableAgent(
   stageName: string,
   pipeline: PipelineConfig,
-  config: HenryConfig,
+  config: HankConfig,
 ): AgentConfig | null {
   const stage = pipeline.stages[stageName]
   if (!stage) return null

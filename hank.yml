@@ -1,0 +1,63 @@
+projects:
+  land-catalyst:
+    repo: git@github.com:your-org/land-catalyst.git
+    main_branch: main
+    branch_prefix: hank/
+    setup:
+      - npm ci
+
+base_dir: ~/dev/hank-agents
+
+defaults:
+  model: sonnet
+  cli: claude
+  poll_interval: 5
+  max_turns: 50
+  max_budget_usd: 5
+  disallowed_tools:
+    - Bash(git push *)
+    - Bash(rm -rf *)
+    - Bash(curl *)
+
+agents:
+  agent-1:
+    base_dir: ~/dev/hank-agents/1
+    capabilities: [build, db, containers, supabase]
+    setup:
+      - npx supabase start
+  agent-2:
+    base_dir: ~/dev/hank-agents/2
+    capabilities: [build]
+  agent-3:
+    base_dir: ~/dev/hank-agents/3
+    capabilities: [build]
+  agent-4:
+    base_dir: ~/dev/hank-agents/4
+    capabilities: [build]
+  agent-5:
+    base_dir: ~/dev/hank-agents/5
+    capabilities: [review]
+
+pools:
+  planners:
+    agents: [agent-2]
+  reviewers:
+    agents: [agent-5]
+  builders:
+    agents: [agent-2, agent-3, agent-4]
+  testers:
+    agents: [agent-1]
+    requires: [db, containers]
+  code-reviewers:
+    agents: [agent-5]
+  pr-creators:
+    agents: [agent-2]
+
+cli:
+  claude:
+    command: claude
+    args: ["--print"]
+  cursor:
+    command: cursor
+
+fallback_order: [claude, cursor]

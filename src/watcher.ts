@@ -83,7 +83,8 @@ async function pollStage(
     logStage(stageName, `${chalk.bold(file)} claimed by ${chalk.blue(agent.id)}`)
 
     // Run agent (async — don't block polling)
-    processItem(filePath, file, stageName, agent, lock, pipeline, config).catch(err => {
+    const projectName = item.data.project
+    processItem(filePath, file, stageName, agent, lock, pipeline, config, projectName).catch(err => {
       logError(`Processing ${file} failed: ${err.message}`)
       lock.release()
       releaseAgent(agent.id)
@@ -99,11 +100,12 @@ async function processItem(
   lock: any,
   pipeline: any,
   config: any,
+  projectName?: string,
 ) {
   const stageConfig = pipeline.stages[stageName]
 
   try {
-    const result = await runAgent(filePath, stageName, stageConfig, agent, config)
+    const result = await runAgent(filePath, stageName, stageConfig, agent, config, projectName)
 
     logStage(stageName, `${filename}: ${chalk.bold(result.directive)}${result.reason ? ` — ${result.reason}` : ''}`)
 

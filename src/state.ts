@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, copyFileSync, renameSync, existsSync, mkdirSync } from 'fs'
 import { resolve, basename } from 'path'
 import chalk from 'chalk'
-import { loadConfig, loadPipeline, getRoot } from './config.js'
+import { loadConfig, loadPipeline, getRoot, getDefaultProject } from './config.js'
 import { getAllDirs } from './pipeline.js'
 import { parseWorkItem, updateFrontmatter } from './frontmatter.js'
 import { getAssignments } from './scheduler.js'
@@ -94,8 +94,10 @@ export function injectItem(file: string) {
   try {
     const { data } = parseWorkItem(dest)
     const now = new Date().toISOString()
+    const config = loadConfig()
     const defaults: Partial<WorkItem> = {
       id: data.id || basename(file, '.md'),
+      project: data.project || getDefaultProject(config),
       status: 'pending',
       stage: 'drafts',
       attempt: 1,

@@ -1,10 +1,10 @@
 {
-  "name": "henry",
+  "name": "hank",
   "version": "0.1.0",
   "description": "AI CLI agent orchestration framework",
   "type": "module",
   "bin": {
-    "henry": "./src/cli.ts"
+    "hank": "./src/cli.ts"
   },
   "scripts": {
     "dev": "tsx src/cli.ts",
