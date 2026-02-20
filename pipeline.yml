@@ -1,0 +1,67 @@
+stages:
+  drafts:
+    prompt: agents/planner.md
+    pool: planners
+    model: opus
+    max_budget_usd: 10
+    transitions:
+      PASS: plans
+      FAIL: failed
+
+  plans:
+    prompt: agents/planner.md
+    pool: planners
+    model: opus
+    max_budget_usd: 10
+    transitions:
+      PASS: review
+      FAIL: failed
+
+  review:
+    prompt: agents/reviewer.md
+    pool: reviewers
+    model: opus
+    transitions:
+      PASS: build
+      REJECT: plans
+      FAIL: failed
+
+  build:
+    prompt: agents/builder.md
+    pool: builders
+    model: sonnet
+    max_budget_usd: 8
+    transitions:
+      PASS: test
+      FAIL: failed
+    inner_loop:
+      on_reject_from: test
+      test_prompt: agents/tester.md
+      max_iterations: 5
+
+  test:
+    prompt: agents/tester.md
+    pool: testers
+    model: sonnet
+    transitions:
+      PASS: code-review
+      REJECT: build
+      FAIL: failed
+
+  code-review:
+    prompt: agents/code-reviewer.md
+    pool: code-reviewers
+    model: opus
+    transitions:
+      PASS: draft-pr
+      REJECT: build
+      FAIL: failed
+
+  draft-pr:
+    prompt: agents/pr-creator.md
+    pool: pr-creators
+    transitions:
+      PASS: done
+      FAIL: failed
+
+max_attempts: 3

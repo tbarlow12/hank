@@ -1,0 +1,61 @@
+project:
+  name: land-catalyst
+  repo: git@github.com:your-org/land-catalyst.git
+  main_branch: main
+  branch_prefix: henry/
+  base_dir: ~/dev/henry-agents
+
+defaults:
+  model: sonnet
+  cli: claude
+  poll_interval: 5
+  max_turns: 50
+  max_budget_usd: 5
+
+# Setup commands run after cloning each agent repo (in order)
+setup:
+  - npm ci
+
+agents:
+  agent-1:
+    path: ~/dev/henry-agents/1/land-catalyst
+    capabilities: [db, containers, supabase]
+    setup:
+      - npm ci
+      - npx supabase start
+  agent-2:
+    path: ~/dev/henry-agents/2/land-catalyst
+    capabilities: [build]
+  agent-3:
+    path: ~/dev/henry-agents/3/land-catalyst
+    capabilities: [build]
+  agent-4:
+    path: ~/dev/henry-agents/4/land-catalyst
+    capabilities: [build]
+  agent-5:
+    path: ~/dev/henry-agents/5/land-catalyst
+    capabilities: [review]
+
+pools:
+  planners:
+    agents: [agent-2]
+  reviewers:
+    agents: [agent-5]
+  builders:
+    agents: [agent-2, agent-3, agent-4]
+  testers:
+    agents: [agent-1]
+    requires: [db, containers]
+  code-reviewers:
+    agents: [agent-5]
+  pr-creators:
+    agents: [agent-2]
+
+cli:
+  claude:
+    command: claude
+    args: ["--print", "--dangerously-skip-permissions"]
+  cursor:
+    command: cursor
+
+fallback_order: [claude, cursor]

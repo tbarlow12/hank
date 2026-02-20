@@ -1,0 +1,7 @@
+node_modules/
+dist/
+pipeline/
+locks/
+logs/
+*.lock
+.DS_Store
