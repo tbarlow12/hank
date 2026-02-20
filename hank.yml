@@ -6,7 +6,7 @@ projects:
     setup:
       - npm ci
 
-base_dir: ~/dev/hank-agents
+base_dir: .hank/agents
 
 defaults:
   model: balanced
@@ -21,21 +21,21 @@ defaults:
 
 agents:
   agent-1:
-    base_dir: ~/dev/hank-agents/1
+    base_dir: .hank/agents/1
     capabilities: [build, db, containers, supabase]
     setup:
       - npx supabase start
   agent-2:
-    base_dir: ~/dev/hank-agents/2
+    base_dir: .hank/agents/2
     capabilities: [build]
   agent-3:
-    base_dir: ~/dev/hank-agents/3
+    base_dir: .hank/agents/3
     capabilities: [build]
   agent-4:
-    base_dir: ~/dev/hank-agents/4
+    base_dir: .hank/agents/4
     capabilities: [build]
   agent-5:
-    base_dir: ~/dev/hank-agents/5
+    base_dir: .hank/agents/5
     capabilities: [review]
 
 pools:

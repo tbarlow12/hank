@@ -6,7 +6,10 @@ import type { HankConfig, PipelineConfig, AgentConfig } from './types.js'
 const ROOT = resolve(import.meta.dirname, '..')
 
 function expandHome(p: string): string {
-  return p.replace(/^~/, process.env.HOME || '~')
+  if (p.startsWith('~')) return p.replace(/^~/, process.env.HOME || '~')
+  if (p.startsWith('/')) return p
+  // Relative paths resolve against hank project root
+  return resolve(ROOT, p)
 }
 
 function loadYaml<T>(file: string): T {
@@ -21,7 +24,7 @@ export function configExists(): boolean {
 export function loadConfig(): HankConfig {
   const raw = loadYaml<any>('hank.yml')
 
-  const baseDir = expandHome(raw.base_dir || '~/dev/hank-agents')
+  const baseDir = expandHome(raw.base_dir || '.hank/agents')
   const projectNames = Object.keys(raw.projects || {})
 
   // Normalize agents: compute clone paths per project

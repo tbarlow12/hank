@@ -105,6 +105,7 @@ export interface StageConfig {
   prompt: string
   pool: string
   model?: string              // model intent: "fast", "balanced", "powerful", or a raw model name
+  cli?: string                // override defaults.cli for this stage (e.g., "claude", "cursor")
   max_budget_usd?: number
   max_turns?: number
   allowed_tools?: string[]      // tools allowed without prompting

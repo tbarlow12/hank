@@ -147,7 +147,7 @@ export async function runWizard() {
   const agentCount = Math.max(1, parseInt(agentCountStr) || 3)
 
   // --- Base directory ---
-  const defaultBase = resolve(process.env.HOME || '~', 'dev/hank-agents')
+  const defaultBase = '.hank/agents'
   const baseDir = await ask('Base directory for agent clones', defaultBase)
 
   // --- Pool assignment ---

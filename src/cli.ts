@@ -85,6 +85,28 @@ program
   })
 
 program
+  .command('edit [description]')
+  .description('Edit config files using natural language (LLM-powered)')
+  .option('-y, --yes', 'Apply changes without confirmation')
+  .action(async (description?: string, opts?: { yes?: boolean }) => {
+    const { editConfig } = await import('./config-edit.js')
+    try {
+      let desc = description
+      if (!desc) {
+        const { createInterface } = await import('readline/promises')
+        const rl = createInterface({ input: process.stdin, output: process.stdout })
+        desc = await rl.question('What would you like to change? ')
+        rl.close()
+        if (!desc.trim()) { console.log('No description provided.'); return }
+      }
+      await editConfig(desc, !!opts?.yes)
+    } catch (e: any) {
+      console.error('Edit failed:', e.message)
+      process.exit(1)
+    }
+  })
+
+program
   .command('dashboard')
   .description('Launch local web dashboard')
   .option('-p, --port <port>', 'Port number', '4800')

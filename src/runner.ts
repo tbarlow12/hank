@@ -91,7 +91,7 @@ async function invokeCLI(
   cwd: string,
   stageName?: string,
 ): Promise<RunResult> {
-  const cliName = config.defaults.cli
+  const cliName = stageConfig.cli || config.defaults.cli
   const cliConfig = config.cli[cliName]
   if (!cliConfig) throw new Error(`Unknown CLI: ${cliName}`)
 
