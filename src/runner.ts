@@ -3,6 +3,7 @@ import { readFileSync, unlinkSync } from 'fs'
 import { resolve } from 'path'
 import { getRoot, getAgentProjectPath, getDefaultProject } from './config.js'
 import { buildSystemPrompt, getRoleToolOverrides } from './project-config.js'
+import { parseWorkItem } from './frontmatter.js'
 import { logItem } from './logger.js'
 import type { AgentConfig, HankConfig, StageConfig, RunResult, Directive, CliToolConfig } from './types.js'
 
@@ -22,13 +23,17 @@ export async function runAgent(
   const project = projectName || getDefaultProject(config)
   const cwd = getAgentProjectPath(agent, project)
 
+  // Check for an existing session ID for this stage (enables resume on re-entry)
+  const { data: itemData } = parseWorkItem(workItemPath)
+  const existingSessionId = itemData.sessions?.[stageName]
+
   // Build combined system prompt: agent role + global config + project config + skills
   const systemPromptFile = buildSystemPrompt(basePromptFile, stageName, cwd)
 
-  // Run the agent
+  // Run the agent — resume previous session if one exists for this stage
   let result: RunResult
   try {
-    result = await invokeCLI(systemPromptFile, workItemContent, stageConfig, agent, config, cwd, stageName)
+    result = await invokeCLI(systemPromptFile, workItemContent, stageConfig, agent, config, cwd, stageName, existingSessionId)
   } finally {
     // Clean up temp prompt file after first invocation reference is done
     // (inner loop will rebuild its own)
@@ -38,6 +43,9 @@ export async function runAgent(
   if (stageConfig.inner_loop && result.directive === 'PASS') {
     const { inner_loop } = stageConfig
     const testBasePrompt = resolve(root, inner_loop.test_prompt)
+
+    // Inner loop resumes the builder's session on each retry
+    let buildSessionId = result.session_id
 
     for (let i = 0; i < inner_loop.max_iterations; i++) {
       logItem(stageName, stageName, agent.id, `Inner loop iteration ${i + 1}/${inner_loop.max_iterations}`)
@@ -50,28 +58,31 @@ export async function runAgent(
 
       if (testResult.directive === 'PASS') {
         safeUnlink(systemPromptFile)
-        return { ...testResult, iterations: i + 1 }
+        return { ...testResult, iterations: i + 1, session_id: buildSessionId }
       }
 
       if (testResult.directive === 'FAIL') {
         safeUnlink(systemPromptFile)
-        return testResult
+        return { ...testResult, session_id: buildSessionId }
       }
 
-      // REJECT: re-invoke builder with feedback
+      // REJECT: re-invoke builder with feedback, resuming its session
       const retrySystemPrompt = buildSystemPrompt(basePromptFile, stageName, cwd)
       const retryPrompt = `${workItemContent}\n\n## Test Failure Feedback (iteration ${i + 1})\n\n${testResult.reason || testResult.output}\n\nFix the issues above and try again.`
-      result = await invokeCLI(retrySystemPrompt, retryPrompt, stageConfig, agent, config, cwd, stageName)
+      result = await invokeCLI(retrySystemPrompt, retryPrompt, stageConfig, agent, config, cwd, stageName, buildSessionId)
       safeUnlink(retrySystemPrompt)
 
+      // Update session ID in case it changed
+      if (result.session_id) buildSessionId = result.session_id
+
       if (result.directive === 'FAIL') {
-        return result
+        return { ...result, session_id: buildSessionId }
       }
     }
 
     // Exhausted iterations — fall through as REJECT
     safeUnlink(systemPromptFile)
-    return { directive: 'REJECT', reason: `Inner loop exhausted after ${inner_loop.max_iterations} iterations`, output: result.output }
+    return { directive: 'REJECT', reason: `Inner loop exhausted after ${inner_loop.max_iterations} iterations`, output: result.output, session_id: buildSessionId }
   }
 
   safeUnlink(systemPromptFile)
@@ -90,12 +101,19 @@ async function invokeCLI(
   config: HankConfig,
   cwd: string,
   stageName?: string,
+  resumeSessionId?: string,
 ): Promise<RunResult> {
   const cliName = stageConfig.cli || config.defaults.cli
   const cliConfig = config.cli[cliName]
   if (!cliConfig) throw new Error(`Unknown CLI: ${cliName}`)
 
+  const isResume = !!(resumeSessionId && cliName === 'claude')
   const args = [...(cliConfig.args || [])]
+
+  // When resuming, use --resume to continue previous session with full context
+  if (isResume) {
+    args.push('--resume', resumeSessionId)
+  }
 
   // Agent role as system prompt (repo's CLAUDE.md still auto-loads from cwd)
   args.push('--append-system-prompt-file', systemPromptFile)
@@ -125,9 +143,6 @@ async function invokeCLI(
   const permMode = stageConfig.permission_mode || config.defaults.permission_mode
   if (permMode) args.push('--permission-mode', permMode)
 
-  // Don't persist sessions — these are ephemeral pipeline runs
-  args.push('--no-session-persistence')
-
   // Structured output for reliable parsing
   args.push('--output-format', 'json')
 
@@ -150,10 +165,12 @@ async function invokeCLI(
     proc.on('close', (code) => {
       // Parse JSON output from claude --output-format json
       let output = stdout.trim()
+      let sessionId: string | undefined
       try {
         const json = JSON.parse(output)
         // claude JSON output has a `result` field with the text content
         output = json.result || output
+        sessionId = json.session_id
       } catch {
         // Not JSON — use raw stdout (fallback for non-claude CLIs)
       }
@@ -161,11 +178,11 @@ async function invokeCLI(
       const result = parseDirective(output)
 
       if (result) {
-        resolve({ ...result, output })
+        resolve({ ...result, output, session_id: sessionId })
       } else if (code !== 0) {
-        resolve({ directive: 'FAIL', reason: `CLI exited with code ${code}: ${stderr.slice(0, 500)}`, output })
+        resolve({ directive: 'FAIL', reason: `CLI exited with code ${code}: ${stderr.slice(0, 500)}`, output, session_id: sessionId })
       } else {
-        resolve({ directive: 'FAIL', reason: 'No DIRECTIVE line found in output', output })
+        resolve({ directive: 'FAIL', reason: 'No DIRECTIVE line found in output', output, session_id: sessionId })
       }
     })
 

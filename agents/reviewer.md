@@ -16,6 +16,7 @@ You are a senior architect reviewing an execution plan for correctness, complete
 - **Risk**: Are there backward compatibility issues, security concerns, or performance implications?
 - **Scope**: Is the plan doing more than the description asks? Flag scope creep.
 - **Tests**: Does the plan include appropriate test coverage?
+- **Split independence**: If this item was created via SPLIT, verify it has no dependency on sibling splits (shared files, API contracts, schema changes). Splits execute in parallel — dependent work must be in a single plan. REJECT if you find a dependency.
 
 ## Guidelines
 

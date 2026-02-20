@@ -66,6 +66,7 @@ export interface HankConfig {
 
 // Per-role instructions + skills (used in both global and project configs)
 export interface RoleConfig {
+  prompt?: string                   // override base agent prompt (path relative to project root)
   instructions?: string
   skills?: string[]               // paths to skill files (markdown)
   allowed_tools?: string[]
@@ -128,6 +129,7 @@ export interface RunResult {
   output: string
   iterations?: number
   pr_url?: string
+  session_id?: string
   splits?: string[]  // raw markdown content for each split work item
 }
 
@@ -144,6 +146,8 @@ export interface WorkItem {
   history: string
   assignee: string
   parent?: string
+  priority?: number // lower = higher priority (default 10)
+  sessions?: Record<string, string> // stage name → CLI session ID for resumption
 }
 
 export interface AgentStatus {

@@ -1,8 +1,10 @@
 import type { HankConfig, PipelineConfig, AgentConfig } from './types.js'
-import { isLocked } from './claim.js'
 
 // Track which agents are currently busy
 const assignments = new Map<string, string>() // agentId → workItemFilename
+
+// Round-robin index per pool
+const poolIndex = new Map<string, number>()
 
 export function findAvailableAgent(
   stageName: string,
@@ -15,18 +17,29 @@ export function findAvailableAgent(
   const pool = config.pools[stage.pool]
   if (!pool) return null
 
-  for (const agentId of pool.agents) {
+  const agents = pool.agents
+  const len = agents.length
+  if (len === 0) return null
+
+  // Start scanning from where we left off (round-robin)
+  const offset = poolIndex.get(stage.pool) || 0
+
+  for (let i = 0; i < len; i++) {
+    const idx = (offset + i) % len
+    const agentId = agents[idx]
+
     if (assignments.has(agentId)) continue
 
     const agent = config.agents[agentId]
     if (!agent) continue
 
-    // Check capability requirements
     if (pool.requires) {
       const hasAll = pool.requires.every(cap => agent.capabilities.includes(cap))
       if (!hasAll) continue
     }
 
+    // Advance past this agent for next call
+    poolIndex.set(stage.pool, (idx + 1) % len)
     return agent
   }
 

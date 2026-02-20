@@ -63,8 +63,12 @@ export function buildSystemPrompt(
 
   const parts: string[] = []
 
-  // 1. Base agent role prompt
-  parts.push(readFileSync(agentPromptFile, 'utf-8'))
+  // 1. Base agent role prompt — resolution order:
+  //    a) project .hank.yml roles.<role>.prompt (relative to project dir)
+  //    b) ~/.hank/agents/<role>.md (user's customized copy)
+  //    c) Hank default from pipeline.yml (agentPromptFile)
+  const basePromptFile = resolveAgentPrompt(role, project, projectDir, agentPromptFile)
+  parts.push(readFileSync(basePromptFile, 'utf-8'))
 
   // 2. Global instructions
   if (global.instructions) {
@@ -105,6 +109,28 @@ export function buildSystemPrompt(
   writeFileSync(tmpFile, combined, 'utf-8')
 
   return tmpFile
+}
+
+/** Resolve which agent prompt file to use for a role */
+function resolveAgentPrompt(
+  role: string,
+  project: HankProjectMeta,
+  projectDir: string,
+  defaultPromptFile: string,
+): string {
+  // Project-level override
+  const projectOverride = project.roles?.[role]?.prompt
+  if (projectOverride) {
+    const p = resolve(projectDir, projectOverride)
+    if (existsSync(p)) return p
+  }
+
+  // User's global agents directory
+  const globalPrompt = resolve(HOME, '.hank', 'agents', `${role}.md`)
+  if (existsSync(globalPrompt)) return globalPrompt
+
+  // Hank default
+  return defaultPromptFile
 }
 
 /** Collect and dedupe skill file paths from global + project configs */
@@ -185,8 +211,12 @@ instructions: |
 
 # Per-role instructions and skills
 # Roles: planner, reviewer, builder, tester, code-reviewer, pr-creator
+#
+# Each role can override the base agent prompt with a project-specific version.
+# Base prompts are copied to .hank/agents/ during init — edit those, then set prompt: below.
 roles:
   builder:
+    # prompt: .hank/agents/builder.md
     instructions: |
       # Add builder-specific instructions.
       # e.g., "Always run npm run lint after changes."
@@ -194,12 +224,14 @@ roles:
       # - .claude/skills/my-skill.md
 
   tester:
+    # prompt: .hank/agents/tester.md
     instructions: |
       # What commands should the tester run?
       # e.g., "Run: npm test && npm run lint && npx tsc --noEmit"
     skills: []
 
   planner:
+    # prompt: .hank/agents/planner.md
     skills: []
       # - .claude/skills/architecture.md
 
@@ -215,6 +247,7 @@ export function scaffoldGlobalConfig() {
   const dir = resolve(HOME, '.hank')
   mkdirSync(dir, { recursive: true })
   mkdirSync(resolve(dir, 'skills'), { recursive: true })
+  mkdirSync(resolve(dir, 'agents'), { recursive: true })
 
   if (existsSync(GLOBAL_CONFIG_PATH)) return
 

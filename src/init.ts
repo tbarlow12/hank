@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, copyFileSync } from 'fs'
+import { mkdirSync, existsSync, copyFileSync, readdirSync } from 'fs'
 import { resolve } from 'path'
 import { execSync } from 'child_process'
 import chalk from 'chalk'
@@ -20,6 +20,10 @@ export async function init() {
   validatePipeline(pipeline, config)
 
   const root = getRoot()
+
+  // Copy base agent prompts to ~/.hank/agents/ (user's customizable defaults)
+  copyAgentPrompts(root, resolve(process.env.HOME || '~', '.hank'))
+  logInfo('Agent prompts available at ~/.hank/agents/')
 
   // Create pipeline directories
   logInfo('Creating pipeline directories...')
@@ -73,6 +77,9 @@ export async function init() {
         console.log(chalk.green(`    ✓ Scaffolded .hank.yml`))
       }
 
+      // Copy base agent prompts into project's .hank/agents/ for customization
+      copyAgentPrompts(root, resolve(clonePath, '.hank'))
+
       // Run project-level setup commands
       if (projConfig.setup) {
         for (const cmd of projConfig.setup) {
@@ -108,6 +115,28 @@ export async function init() {
   }
 
   logInfo('\nInit complete.')
+}
+
+function copyAgentPrompts(hankRoot: string, destBase: string) {
+  const srcDir = resolve(hankRoot, 'agents')
+  const destDir = resolve(destBase, 'agents')
+
+  if (!existsSync(srcDir)) return
+
+  mkdirSync(destDir, { recursive: true })
+
+  const files = readdirSync(srcDir).filter(f => f.endsWith('.md'))
+  let copied = 0
+  for (const file of files) {
+    const dest = resolve(destDir, file)
+    if (!existsSync(dest)) {
+      copyFileSync(resolve(srcDir, file), dest)
+      copied++
+    }
+  }
+  if (copied > 0) {
+    console.log(chalk.green(`    ✓ Copied ${copied} agent prompt${copied > 1 ? 's' : ''} to ${destDir}`))
+  }
 }
 
 function runSetup(cwd: string, cmd: string, label: string) {

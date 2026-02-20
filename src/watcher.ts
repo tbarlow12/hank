@@ -59,19 +59,27 @@ async function pollStage(
     return // dir doesn't exist yet
   }
 
+  // Parse all pending items, then sort by priority (lower = first) then created (oldest first)
+  const pending: { file: string; filePath: string; item: ReturnType<typeof parseWorkItem> }[] = []
   for (const file of files) {
     const filePath = resolve(stageDir, file)
-
-    // Parse and check status
-    let item
     try {
-      item = parseWorkItem(filePath)
-    } catch {
-      continue
-    }
+      const item = parseWorkItem(filePath)
+      if (item.data.status === 'pending') pending.push({ file, filePath, item })
+    } catch { continue }
+  }
 
-    if (item.data.status !== 'pending') continue
+  pending.sort((a, b) => {
+    const pa = a.item.data.priority ?? 10
+    const pb = b.item.data.priority ?? 10
+    if (pa !== pb) return pa - pb
+    // FIFO: older items first
+    const ca = a.item.data.created || ''
+    const cb = b.item.data.created || ''
+    return ca < cb ? -1 : ca > cb ? 1 : 0
+  })
 
+  for (const { file, filePath, item } of pending) {
     // Try to find an available agent
     const agent = findAvailableAgent(stageName, pipeline, config)
     if (!agent) continue
@@ -111,6 +119,14 @@ async function processItem(
 
   try {
     const result = await runAgent(filePath, stageName, stageConfig, agent, config, projectName)
+
+    // Persist session ID into the work item for future resumption
+    if (result.session_id) {
+      const { parseWorkItem, updateFrontmatter } = await import('./frontmatter.js')
+      const { data } = parseWorkItem(filePath)
+      const sessions = { ...(data.sessions || {}), [stageName]: result.session_id }
+      updateFrontmatter(filePath, { sessions } as any)
+    }
 
     logStage(stageName, `${filename}: ${chalk.bold(result.directive)}${result.reason ? ` — ${result.reason}` : ''}`)
 
