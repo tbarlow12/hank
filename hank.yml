@@ -9,7 +9,7 @@ projects:
 base_dir: ~/dev/hank-agents
 
 defaults:
-  model: sonnet
+  model: balanced
   cli: claude
   poll_interval: 5
   max_turns: 50
@@ -57,7 +57,30 @@ cli:
   claude:
     command: claude
     args: ["--print"]
+    models:
+      fast: sonnet
+      balanced: sonnet
+      powerful: opus
   cursor:
     command: cursor
+    models:
+      fast: gpt-4o-mini
+      balanced: gpt-4o
+      powerful: o3
 
 fallback_order: [claude, cursor]
+
+# Input watchers: bash scripts that detect issues and create work items
+# These run as subprocesses — no LLM tokens burned until a work item enters the pipeline
+inputs: []
+  # Example: Azure Monitor alert watcher
+  # - name: az-alerts
+  #   command: "az monitor metrics alert list --resource-group rg-prod -o json | jq -r '.[] | select(.severity < 2) | {title: .name, body: .description}'"
+  #   interval: 300          # check every 5 minutes
+  #   project: land-catalyst
+  #
+  # Example: GitHub issue watcher
+  # - name: gh-issues
+  #   command: "gh issue list --label hank --json title,body --jq '.[] | {title, body}'"
+  #   interval: 60
+  #   project: land-catalyst

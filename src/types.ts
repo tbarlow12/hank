@@ -23,6 +23,22 @@ export interface PoolConfig {
 export interface CliToolConfig {
   command: string
   args?: string[]
+  // Model name mapping: intent → CLI-specific model identifier
+  // e.g., { fast: "sonnet", balanced: "sonnet", powerful: "opus" } for Claude
+  //        { fast: "gpt-4o-mini", balanced: "gpt-4o", powerful: "o3" } for Cursor
+  models?: Record<string, string>
+}
+
+// Input watchers: bash scripts that run as subprocesses and emit work items
+export interface InputWatcherConfig {
+  name: string
+  command: string              // bash command to run
+  args?: string[]
+  cwd?: string                 // working directory (defaults to project dir)
+  interval?: number            // re-run interval in seconds (0 = run once, stays alive)
+  project: string              // which project work items target
+  env?: Record<string, string> // extra env vars
+  enabled?: boolean            // default true
 }
 
 export interface DefaultsConfig {
@@ -43,6 +59,7 @@ export interface HankConfig {
   agents: Record<string, AgentConfig>
   pools: Record<string, PoolConfig>
   cli: Record<string, CliToolConfig>
+  inputs?: InputWatcherConfig[]
   setup?: string[]
   fallback_order: string[]
 }
@@ -87,7 +104,7 @@ export interface InnerLoopConfig {
 export interface StageConfig {
   prompt: string
   pool: string
-  model?: string
+  model?: string              // model intent: "fast", "balanced", "powerful", or a raw model name
   max_budget_usd?: number
   max_turns?: number
   allowed_tools?: string[]      // tools allowed without prompting

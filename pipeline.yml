@@ -2,7 +2,7 @@ stages:
   drafts:
     prompt: agents/planner.md
     pool: planners
-    model: opus
+    model: powerful                # → opus (claude) / o3 (cursor)
     max_budget_usd: 10
     permission_mode: plan
     disallowed_tools:              # in addition to defaults
@@ -16,7 +16,7 @@ stages:
   plans:
     prompt: agents/planner.md
     pool: planners
-    model: opus
+    model: powerful
     max_budget_usd: 10
     permission_mode: plan
     disallowed_tools:
@@ -30,7 +30,7 @@ stages:
   review:
     prompt: agents/reviewer.md
     pool: reviewers
-    model: opus
+    model: powerful
     permission_mode: plan
     disallowed_tools:
       - Edit
@@ -44,7 +44,7 @@ stages:
   build:
     prompt: agents/builder.md
     pool: builders
-    model: sonnet
+    model: balanced               # → sonnet (claude) / gpt-4o (cursor)
     max_budget_usd: 8
     # inherits default disallowed (no push, no rm -rf, no curl)
     # no additional restrictions — builder needs Edit, Write, Bash
@@ -59,7 +59,7 @@ stages:
   test:
     prompt: agents/tester.md
     pool: testers
-    model: sonnet
+    model: balanced
     disallowed_tools:
       - Edit
       - Write
@@ -72,7 +72,7 @@ stages:
   code-review:
     prompt: agents/code-reviewer.md
     pool: code-reviewers
-    model: opus
+    model: powerful
     permission_mode: plan
     disallowed_tools:
       - Edit
@@ -86,6 +86,7 @@ stages:
   draft-pr:
     prompt: agents/pr-creator.md
     pool: pr-creators
+    model: fast                   # → sonnet (claude) / gpt-4o-mini (cursor)
     allowed_tools:                 # explicitly allow push for this stage
       - Bash(git push *)
       - Bash(gh pr create *)

@@ -4,7 +4,7 @@ import { resolve } from 'path'
 import { getRoot, getAgentProjectPath, getDefaultProject } from './config.js'
 import { buildSystemPrompt, getRoleToolOverrides } from './project-config.js'
 import { logItem } from './logger.js'
-import type { AgentConfig, HankConfig, StageConfig, RunResult, Directive } from './types.js'
+import type { AgentConfig, HankConfig, StageConfig, RunResult, Directive, CliToolConfig } from './types.js'
 
 export async function runAgent(
   workItemPath: string,
@@ -100,8 +100,9 @@ async function invokeCLI(
   // Agent role as system prompt (repo's CLAUDE.md still auto-loads from cwd)
   args.push('--append-system-prompt-file', systemPromptFile)
 
-  // Model
-  const model = stageConfig.model || config.defaults.model
+  // Model: resolve intent (fast/balanced/powerful) to CLI-specific model name
+  const modelIntent = stageConfig.model || config.defaults.model
+  const model = resolveModel(modelIntent, cliConfig)
   if (model) args.push('--model', model)
 
   // Max turns
@@ -207,6 +208,17 @@ function dedupe(...lists: (string[] | undefined)[]): string[] {
     if (list) for (const item of list) set.add(item)
   }
   return [...set]
+}
+
+/** Resolve model intent (fast/balanced/powerful) to CLI-specific model name. */
+function resolveModel(intent: string, cliConfig: CliToolConfig): string | undefined {
+  if (!intent) return undefined
+  // If the CLI has a models map, look up the intent
+  if (cliConfig.models && cliConfig.models[intent]) {
+    return cliConfig.models[intent]
+  }
+  // No mapping — pass raw value through (could be a direct model name like "claude-sonnet-4-6")
+  return intent
 }
 
 function parseSplits(output: string): string[] {

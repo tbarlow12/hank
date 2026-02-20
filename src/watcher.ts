@@ -9,6 +9,7 @@ import { findAvailableAgent, assignAgent, releaseAgent } from './scheduler.js'
 import { runAgent } from './runner.js'
 import { moveItem } from './mover.js'
 import { logStage, logInfo, logError } from './logger.js'
+import { startInputWatchers, stopInputWatchers } from './input-watchers.js'
 
 let running = true
 
@@ -23,9 +24,13 @@ export async function startWatchers(targetStage?: string) {
   logInfo(`Starting watchers for: ${stages.join(', ')}`)
   logInfo(`Poll interval: ${pollInterval / 1000}s`)
 
+  // Start input watchers (bash subprocesses that create work items)
+  startInputWatchers(config)
+
   // Handle graceful shutdown
   process.on('SIGINT', () => {
     logInfo('\nShutting down watchers...')
+    stopInputWatchers()
     running = false
     process.exit(0)
   })
