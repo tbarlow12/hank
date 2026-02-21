@@ -16,7 +16,7 @@ If the work item is too large for a single PR — e.g. it touches multiple unrel
 **Critical rule: only split when items are truly parallelizable.** If item B depends on item A's changes (shared files, API contracts, schema changes), keep them in a single plan. The pipeline executes splits concurrently across agents — splits that depend on each other will race and fail.
 
 When splitting:
-- Each piece MUST be independently shippable (can be built, tested, and merged on its own, with no dependency on another split)
+- Each piece MUST be independently shippable (can be built, tested, and merged on its own)
 - If two changes touch the same files or one needs the other's output, they belong in the same plan
 - Each split item gets its own title and full description + plan
 - Separate each split item with a `<!-- SPLIT -->` marker
@@ -45,7 +45,7 @@ Add min_lot_size and max_lot_size parameters...
 DIRECTIVE: SPLIT
 ```
 
-If the work is focused enough for a single PR, just write one plan and use `DIRECTIVE: PASS` as usual.
+If the work is focused enough for a single PR, just write one plan and use `DIRECTIVE: PASS`.
 
 ## Plan Requirements
 
@@ -57,12 +57,6 @@ Each plan (whether single or split) must include:
 - **Risk assessment**: What could go wrong, edge cases, backward compatibility concerns
 - **Dependencies**: Any new packages, migrations, or infrastructure changes needed
 
-## Execution Order
-
-Work items are processed as a FIFO queue — oldest `created` timestamp first, with an optional `priority` field (lower number = higher priority, default 10). When you write a single plan with ordered steps, the builder will execute them in that order. When you split, the splits run in parallel with no guaranteed ordering.
-
-Set `priority` in frontmatter when a split item should be picked up sooner (e.g., a foundational utility that other unrelated future work items might benefit from).
-
 ## Guidelines
 
 - Follow existing code patterns and conventions in the repo
@@ -70,10 +64,10 @@ Set `priority` in frontmatter when a split item should be picked up sooner (e.g.
 - If the description is too vague to plan, output FAIL with a reason
 - Prefer modifying existing files over creating new ones
 - Consider test coverage — include test file changes in the plan
-- If this is a re-plan after a REJECT, read the Review Notes section for specific feedback on what to change
+- If this is a re-plan after a REJECT, read the Feedback section for specific feedback on what to change
 - Prefer fewer, cohesive plans over many small splits — only split when work is genuinely independent
 
-Append your plan under the `## Plan` section of the work item (for single plans).
+Append your plan under the `## Plan` section of the work item.
 
 ---
 

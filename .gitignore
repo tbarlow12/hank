@@ -5,5 +5,3 @@ locks/
 logs/
 *.lock
 .DS_Store
-.hank/
-.hank-staging/

@@ -1,7 +1,7 @@
 import { mkdirSync, appendFileSync } from 'fs'
 import { resolve } from 'path'
 import chalk from 'chalk'
-import { getRoot } from './config.js'
+import { LOGS_DIR } from './config.js'
 
 function ensureDir(dir: string) {
   mkdirSync(dir, { recursive: true })
@@ -12,18 +12,16 @@ function ts(): string {
 }
 
 export function logStage(stage: string, msg: string) {
-  const dir = resolve(getRoot(), 'logs/stages')
+  const dir = resolve(LOGS_DIR, 'stages')
   ensureDir(dir)
-  const line = `[${ts()}] ${msg}\n`
-  appendFileSync(resolve(dir, `${stage}.log`), line)
+  appendFileSync(resolve(dir, `${stage}.log`), `[${ts()}] ${msg}\n`)
   console.log(chalk.dim(`[${stage}]`), msg)
 }
 
 export function logItem(itemId: string, stage: string, agent: string, msg: string) {
-  const dir = resolve(getRoot(), 'logs/items')
+  const dir = resolve(LOGS_DIR, 'items')
   ensureDir(dir)
-  const line = `[${ts()}] [${stage}] [${agent}] ${msg}\n`
-  appendFileSync(resolve(dir, `${itemId}.log`), line)
+  appendFileSync(resolve(dir, `${itemId}.log`), `[${ts()}] [${stage}] [${agent}] ${msg}\n`)
   console.log(chalk.dim(`[${itemId}]`), chalk.blue(`[${agent}]`), msg)
 }
 

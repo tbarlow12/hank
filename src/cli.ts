@@ -1,60 +1,27 @@
 #!/usr/bin/env tsx
 import { program } from 'commander'
-import { init } from './init.js'
 
 program
-  .name('hank')
-  .description('AI CLI agent orchestration framework')
-  .version('0.1.0')
+  .name('dp')
+  .description('Dispatch — AI agent pipeline orchestrator')
+  .version('0.2.0')
 
 program
-  .command('init')
-  .description('Interactive setup wizard — configure repos, agents, clone, and bootstrap')
+  .command('watch')
+  .description('Poll ideas/plans/work continuously')
   .action(async () => {
+    const { startWatching } = await import('./watcher.js')
     try {
-      await init()
+      await startWatching()
     } catch (e: any) {
-      console.error('Init failed:', e.message)
+      console.error('Watch failed:', e.message)
       process.exit(1)
     }
-  })
-
-program
-  .command('doctor')
-  .description('Check prerequisites and environment')
-  .action(async () => {
-    const { checkPrerequisites, printPrerequisites, getEnvironmentNotes } = await import('./prerequisites.js')
-    const ok = printPrerequisites(checkPrerequisites())
-    console.log()
-    for (const line of getEnvironmentNotes()) console.log(`  ${line}`)
-    console.log()
-    process.exit(ok ? 0 : 1)
-  })
-
-program
-  .command('start [stage]')
-  .description('Launch pipeline watchers (all or specific stage)')
-  .action(async (stage?: string) => {
-    const { startWatchers } = await import('./watcher.js')
-    try {
-      await startWatchers(stage)
-    } catch (e: any) {
-      console.error('Start failed:', e.message)
-      process.exit(1)
-    }
-  })
-
-program
-  .command('stop')
-  .description('Stop all watchers')
-  .action(() => {
-    // Watchers run in-process; stopping = killing the process
-    console.log('Send SIGINT (Ctrl+C) to stop watchers.')
   })
 
 program
   .command('status')
-  .description('Show pipeline state')
+  .description('Show agents + pipeline state')
   .action(async () => {
     const { printStatus } = await import('./state.js')
     printStatus()
@@ -62,57 +29,31 @@ program
 
 program
   .command('inject <file>')
-  .description('Add a work item to drafts/')
+  .description('Copy a work item to 1-Ideas/')
   .action(async (file: string) => {
     const { injectItem } = await import('./state.js')
     injectItem(file)
   })
 
 program
-  .command('logs [target]')
-  .description('Tail logs for a stage or item ID')
-  .action(async (target?: string) => {
-    const { tailLogs } = await import('./state.js')
-    tailLogs(target)
+  .command('run <file>')
+  .description('Single idea through full pipeline (plan → execute → PR)')
+  .action(async (file: string) => {
+    const { resolve } = await import('path')
+    const { injectItem } = await import('./state.js')
+    const { runSingle } = await import('./watcher.js')
+    const filePath = resolve(process.cwd(), file)
+    await runSingle(filePath, false)
   })
 
 program
-  .command('retry <itemId>')
-  .description('Move a failed item back to its last stage')
-  .action(async (itemId: string) => {
-    const { retryItem } = await import('./state.js')
-    retryItem(itemId)
-  })
-
-program
-  .command('edit [description]')
-  .description('Edit config files using natural language (LLM-powered)')
-  .option('-y, --yes', 'Apply changes without confirmation')
-  .action(async (description?: string, opts?: { yes?: boolean }) => {
-    const { editConfig } = await import('./config-edit.js')
-    try {
-      let desc = description
-      if (!desc) {
-        const { createInterface } = await import('readline/promises')
-        const rl = createInterface({ input: process.stdin, output: process.stdout })
-        desc = await rl.question('What would you like to change? ')
-        rl.close()
-        if (!desc.trim()) { console.log('No description provided.'); return }
-      }
-      await editConfig(desc, !!opts?.yes)
-    } catch (e: any) {
-      console.error('Edit failed:', e.message)
-      process.exit(1)
-    }
-  })
-
-program
-  .command('dashboard')
-  .description('Launch local web dashboard')
-  .option('-p, --port <port>', 'Port number', '4800')
-  .action(async (opts) => {
-    const { startDashboard } = await import('./dashboard.js')
-    startDashboard(parseInt(opts.port))
+  .command('plan <file>')
+  .description('Plan only — idea → plan, no execution')
+  .action(async (file: string) => {
+    const { resolve } = await import('path')
+    const { runSingle } = await import('./watcher.js')
+    const filePath = resolve(process.cwd(), file)
+    await runSingle(filePath, true)
   })
 
 program.parse()

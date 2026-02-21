@@ -1,94 +1,87 @@
 import { renameSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { resolve, basename } from 'path'
 import matter from 'gray-matter'
-import { getRoot } from './config.js'
+import { PIPELINE_DIR, MAX_ATTEMPTS } from './config.js'
 import { updateFrontmatter, appendSection } from './frontmatter.js'
 import type { Lock } from './claim.js'
-import type { PipelineConfig, Directive } from './types.js'
-import { getNextStage } from './pipeline.js'
+import type { Directive } from './types.js'
 import { logStage, logItem } from './logger.js'
+
+// Fixed transitions for 3-stage pipeline
+const TRANSITIONS: Record<string, Record<string, string>> = {
+  '1-Ideas': { PASS: '2-Plans', SPLIT: '2-Plans', FAIL: '4-Failures', REJECT: '4-Failures' },
+  '2-Plans': { PASS: '3-Work', FAIL: '4-Failures', REJECT: '1-Ideas' },
+  '3-Work':  { PASS: '5-Done', FAIL: '4-Failures', REJECT: '2-Plans' },
+}
 
 export function moveItem(
   filePath: string,
   lock: Lock,
-  pipeline: PipelineConfig,
   currentStage: string,
   directive: Directive,
   reason?: string,
   output?: string,
   splits?: string[],
 ): string {
-  const root = getRoot()
   const filename = basename(filePath)
 
-  // SPLIT: create child work items, move parent to done
+  // SPLIT: create children, move parent to done
   if (directive === 'SPLIT' && splits && splits.length > 0) {
-    return handleSplit(filePath, filename, lock, pipeline, currentStage, root, splits)
+    return handleSplit(filePath, filename, lock, currentStage, splits)
   }
 
-  // Check attempt count for REJECT
   let targetStage: string
   if (directive === 'REJECT') {
-    // Read current attempt from frontmatter
     const raw = readFileSync(filePath, 'utf-8')
     const { data } = matter(raw)
     const attempt = (data.attempt || 1) + 1
-
-    if (attempt > pipeline.max_attempts) {
-      targetStage = 'failed'
-      logStage(currentStage, `${filename} exceeded max attempts (${pipeline.max_attempts}), moving to failed/`)
+    if (attempt > MAX_ATTEMPTS) {
+      targetStage = '4-Failures'
+      logStage(currentStage, `${filename} exceeded max attempts (${MAX_ATTEMPTS}), moving to 4-Failures/`)
     } else {
-      targetStage = getNextStage(pipeline, currentStage, directive)
+      targetStage = TRANSITIONS[currentStage]?.REJECT || '4-Failures'
       updateFrontmatter(filePath, { attempt } as any)
     }
   } else {
-    targetStage = getNextStage(pipeline, currentStage, directive)
+    targetStage = TRANSITIONS[currentStage]?.[directive]
+    if (!targetStage) targetStage = '4-Failures'
   }
 
   // Update frontmatter
   const now = new Date().toISOString()
+  const status = targetStage === '5-Done' ? 'done' as const
+    : targetStage === '4-Failures' ? 'failed' as const
+    : 'pending' as const
+
   updateFrontmatter(filePath, {
     stage: targetStage,
-    status: targetStage === 'done' || targetStage === 'failed' ? targetStage as any : 'pending',
+    status,
     assignee: '',
     history: `${currentStage}→${targetStage}:${now}`,
   } as any)
 
-  // Append feedback to relevant section if REJECT
-  if (directive === 'REJECT' && reason) {
-    const sectionMap: Record<string, string> = {
-      review: 'Review Notes',
-      test: 'Test Results',
-      'code-review': 'Code Review',
-    }
-    const section = sectionMap[currentStage] || 'Review Notes'
-    appendSection(filePath, section, `**Rejected** (${now}): ${reason}`)
-  }
-
   // Append output to relevant section
   if (output && directive === 'PASS') {
     const sectionMap: Record<string, string> = {
-      drafts: 'Plan',
-      plans: 'Plan',
-      review: 'Review Notes',
-      build: 'Build Log',
-      test: 'Test Results',
-      'code-review': 'Code Review',
+      '1-Ideas': 'Plan',
+      '2-Plans': 'Execution Log',
+      '3-Work': 'Completion',
     }
     const section = sectionMap[currentStage]
-    if (section) {
-      appendSection(filePath, section, output)
-    }
+    if (section) appendSection(filePath, section, output)
+  }
+
+  if (directive === 'REJECT' && reason) {
+    appendSection(filePath, 'Feedback', `**Rejected** (${new Date().toISOString()}): ${reason}`)
   }
 
   // Move file
-  const targetDir = resolve(root, 'pipeline', targetStage)
+  const targetDir = resolve(PIPELINE_DIR, targetStage)
+  mkdirSync(targetDir, { recursive: true })
   const targetPath = resolve(targetDir, filename)
   renameSync(filePath, targetPath)
 
-  // Release lock
   lock.release()
-
   logItem(filename.replace('.md', ''), currentStage, lock.agentId, `${directive} → ${targetStage}`)
   return targetPath
 }
@@ -97,23 +90,18 @@ function handleSplit(
   filePath: string,
   filename: string,
   lock: Lock,
-  pipeline: PipelineConfig,
   currentStage: string,
-  root: string,
   splits: string[],
 ): string {
   const now = new Date().toISOString()
   const parentId = filename.replace('.md', '')
-  const targetStage = getNextStage(pipeline, currentStage, 'PASS') // splits advance like PASS
+  const targetStage = '2-Plans'
 
-  const targetDir = resolve(root, 'pipeline', targetStage)
+  const targetDir = resolve(PIPELINE_DIR, targetStage)
   mkdirSync(targetDir, { recursive: true })
 
-  // Create each child work item
   for (let i = 0; i < splits.length; i++) {
     const splitContent = splits[i]
-
-    // Try to extract a title from the first heading or first line
     const titleMatch = splitContent.match(/^#\s+(.+)/m) || splitContent.match(/^title:\s*(.+)/mi)
     const title = titleMatch ? titleMatch[1].trim() : `${parentId}-part-${i + 1}`
     const childId = `${parentId}-${i + 1}`
@@ -121,33 +109,23 @@ function handleSplit(
     const childFrontmatter = {
       id: childId,
       title,
-      source: 'split',
-      created: now,
-      branch: '',
       status: 'pending' as const,
       stage: targetStage,
       attempt: 1,
+      created: now,
       history: `${currentStage}:split:${now}`,
       assignee: '',
       parent: parentId,
     }
 
-    const childFile = matter.stringify('\n' + splitContent + '\n', childFrontmatter)
-    const childPath = resolve(targetDir, `${childId}.md`)
-    writeFileSync(childPath, childFile, 'utf-8')
-
+    writeFileSync(resolve(targetDir, `${childId}.md`), matter.stringify('\n' + splitContent + '\n', childFrontmatter), 'utf-8')
     logItem(childId, currentStage, lock.agentId, `Split child ${i + 1}/${splits.length} → ${targetStage}`)
   }
 
   // Move parent to done
-  const doneDir = resolve(root, 'pipeline/done')
+  const doneDir = resolve(PIPELINE_DIR, '5-Done')
   mkdirSync(doneDir, { recursive: true })
-  updateFrontmatter(filePath, {
-    status: 'done' as any,
-    stage: 'done',
-    assignee: '',
-    history: `${currentStage}→split(${splits.length}):${now}`,
-  } as any)
+  updateFrontmatter(filePath, { status: 'done' as any, stage: '5-Done', assignee: '' } as any)
   appendSection(filePath, 'Plan', `**Split into ${splits.length} work items** (${now}):\n${splits.map((_, i) => `- ${parentId}-${i + 1}`).join('\n')}`)
 
   const donePath = resolve(doneDir, filename)

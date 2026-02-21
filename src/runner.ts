@@ -1,156 +1,50 @@
 import { spawn } from 'child_process'
-import { readFileSync, unlinkSync } from 'fs'
+import { readFileSync } from 'fs'
 import { resolve } from 'path'
-import { getRoot, getAgentProjectPath, getDefaultProject } from './config.js'
-import { buildSystemPrompt, getRoleToolOverrides } from './project-config.js'
+import { ROOT, PLANNER_MODEL, EXECUTOR_MODEL } from './config.js'
 import { parseWorkItem } from './frontmatter.js'
-import { logItem } from './logger.js'
-import type { AgentConfig, HankConfig, StageConfig, RunResult, Directive, CliToolConfig } from './types.js'
+import type { Agent, RunResult, Directive } from './types.js'
 
 export async function runAgent(
   workItemPath: string,
-  stageName: string,
-  stageConfig: StageConfig,
-  agent: AgentConfig,
-  config: HankConfig,
-  projectName?: string,
+  stage: string,
+  agent: Agent,
+  promptFile: string,
 ): Promise<RunResult> {
-  const root = getRoot()
   const workItemContent = readFileSync(workItemPath, 'utf-8')
-  const basePromptFile = resolve(root, stageConfig.prompt)
+  const systemPromptFile = resolve(ROOT, promptFile)
 
-  // Resolve which project directory the agent should work in
-  const project = projectName || getDefaultProject(config)
-  const cwd = getAgentProjectPath(agent, project)
+  // Check for existing session ID for resume
+  const { data } = parseWorkItem(workItemPath)
+  const resumeSessionId = data.sessions?.[stage]
 
-  // Check for an existing session ID for this stage (enables resume on re-entry)
-  const { data: itemData } = parseWorkItem(workItemPath)
-  const existingSessionId = itemData.sessions?.[stageName]
+  const model = agent.role === 'planner' ? PLANNER_MODEL : EXECUTOR_MODEL
 
-  // Build combined system prompt: agent role + global config + project config + skills
-  const systemPromptFile = buildSystemPrompt(basePromptFile, stageName, cwd)
-
-  // Run the agent — resume previous session if one exists for this stage
-  let result: RunResult
-  try {
-    result = await invokeCLI(systemPromptFile, workItemContent, stageConfig, agent, config, cwd, stageName, existingSessionId)
-  } finally {
-    // Clean up temp prompt file after first invocation reference is done
-    // (inner loop will rebuild its own)
-  }
-
-  // Inner loop: if configured, run test after build and loop on REJECT
-  if (stageConfig.inner_loop && result.directive === 'PASS') {
-    const { inner_loop } = stageConfig
-    const testBasePrompt = resolve(root, inner_loop.test_prompt)
-
-    // Inner loop resumes the builder's session on each retry
-    let buildSessionId = result.session_id
-
-    for (let i = 0; i < inner_loop.max_iterations; i++) {
-      logItem(stageName, stageName, agent.id, `Inner loop iteration ${i + 1}/${inner_loop.max_iterations}`)
-
-      // Build test system prompt (tester role + project config)
-      const testSystemPrompt = buildSystemPrompt(testBasePrompt, 'test', cwd)
-      const testPrompt = `${workItemContent}\n\n## Previous Build Output\n\n${result.output}`
-      const testResult = await invokeCLI(testSystemPrompt, testPrompt, stageConfig, agent, config, cwd, 'test')
-      safeUnlink(testSystemPrompt)
-
-      if (testResult.directive === 'PASS') {
-        safeUnlink(systemPromptFile)
-        return { ...testResult, iterations: i + 1, session_id: buildSessionId }
-      }
-
-      if (testResult.directive === 'FAIL') {
-        safeUnlink(systemPromptFile)
-        return { ...testResult, session_id: buildSessionId }
-      }
-
-      // REJECT: re-invoke builder with feedback, resuming its session
-      const retrySystemPrompt = buildSystemPrompt(basePromptFile, stageName, cwd)
-      const retryPrompt = `${workItemContent}\n\n## Test Failure Feedback (iteration ${i + 1})\n\n${testResult.reason || testResult.output}\n\nFix the issues above and try again.`
-      result = await invokeCLI(retrySystemPrompt, retryPrompt, stageConfig, agent, config, cwd, stageName, buildSessionId)
-      safeUnlink(retrySystemPrompt)
-
-      // Update session ID in case it changed
-      if (result.session_id) buildSessionId = result.session_id
-
-      if (result.directive === 'FAIL') {
-        return { ...result, session_id: buildSessionId }
-      }
-    }
-
-    // Exhausted iterations — fall through as REJECT
-    safeUnlink(systemPromptFile)
-    return { directive: 'REJECT', reason: `Inner loop exhausted after ${inner_loop.max_iterations} iterations`, output: result.output, session_id: buildSessionId }
-  }
-
-  safeUnlink(systemPromptFile)
-  return result
+  return invokeClaude(systemPromptFile, workItemContent, model, agent.dir, resumeSessionId)
 }
 
-function safeUnlink(path: string) {
-  try { unlinkSync(path) } catch { /* already cleaned */ }
-}
-
-async function invokeCLI(
+async function invokeClaude(
   systemPromptFile: string,
   userPrompt: string,
-  stageConfig: StageConfig,
-  agent: AgentConfig,
-  config: HankConfig,
+  model: string,
   cwd: string,
-  stageName?: string,
   resumeSessionId?: string,
 ): Promise<RunResult> {
-  const cliName = stageConfig.cli || config.defaults.cli
-  const cliConfig = config.cli[cliName]
-  if (!cliConfig) throw new Error(`Unknown CLI: ${cliName}`)
+  const args = ['--print', '--output-format', 'json']
 
-  const isResume = !!(resumeSessionId && cliName === 'claude')
-  const args = [...(cliConfig.args || [])]
+  args.push('--model', model)
+  args.push('--append-system-prompt-file', systemPromptFile)
+  args.push('--max-turns', '50')
+  args.push('--permission-mode', 'bypassPermissions')
 
-  // When resuming, use --resume to continue previous session with full context
-  if (isResume) {
+  if (resumeSessionId) {
     args.push('--resume', resumeSessionId)
   }
 
-  // Agent role as system prompt (repo's CLAUDE.md still auto-loads from cwd)
-  args.push('--append-system-prompt-file', systemPromptFile)
-
-  // Model: resolve intent (fast/balanced/powerful) to CLI-specific model name
-  const modelIntent = stageConfig.model || config.defaults.model
-  const model = resolveModel(modelIntent, cliConfig)
-  if (model) args.push('--model', model)
-
-  // Max turns
-  const maxTurns = stageConfig.max_turns || config.defaults.max_turns
-  if (maxTurns) args.push('--max-turns', String(maxTurns))
-
-  // Max budget
-  const maxBudget = stageConfig.max_budget_usd || config.defaults.max_budget_usd
-  if (maxBudget) args.push('--max-budget-usd', String(maxBudget))
-
-  // Tool restrictions: merge defaults + stage + global/project role configs
-  const roleOverrides = stageName ? getRoleToolOverrides(stageName, cwd) : { allowed: undefined, disallowed: undefined }
-  const allowed = dedupe(config.defaults.allowed_tools, stageConfig.allowed_tools, roleOverrides.allowed)
-  for (const tool of allowed) args.push('--allowedTools', tool)
-
-  const disallowed = dedupe(config.defaults.disallowed_tools, stageConfig.disallowed_tools, roleOverrides.disallowed)
-  for (const tool of disallowed) args.push('--disallowedTools', tool)
-
-  // Permission mode: stage overrides default
-  const permMode = stageConfig.permission_mode || config.defaults.permission_mode
-  if (permMode) args.push('--permission-mode', permMode)
-
-  // Structured output for reliable parsing
-  args.push('--output-format', 'json')
-
-  // User prompt = the work item content
   args.push('--prompt', userPrompt)
 
-  return new Promise<RunResult>((resolve, reject) => {
-    const proc = spawn(cliConfig.command, args, {
+  return new Promise<RunResult>((res, rej) => {
+    const proc = spawn('claude', args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
@@ -160,87 +54,64 @@ async function invokeCLI(
     let stderr = ''
 
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
-    proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+    proc.stderr.on('data', (chunk: Buffer) => {
+      const line = chunk.toString()
+      stderr += line
+      process.stderr.write(line) // stream stderr for visibility
+    })
 
     proc.on('close', (code) => {
-      // Parse JSON output from claude --output-format json
       let output = stdout.trim()
       let sessionId: string | undefined
+
       try {
         const json = JSON.parse(output)
-        // claude JSON output has a `result` field with the text content
         output = json.result || output
         sessionId = json.session_id
-      } catch {
-        // Not JSON — use raw stdout (fallback for non-claude CLIs)
-      }
+      } catch { /* not JSON, use raw */ }
 
-      const result = parseDirective(output)
-
-      if (result) {
-        resolve({ ...result, output, session_id: sessionId })
+      const parsed = parseDirective(output)
+      if (parsed) {
+        res({ ...parsed, output, session_id: sessionId })
       } else if (code !== 0) {
-        resolve({ directive: 'FAIL', reason: `CLI exited with code ${code}: ${stderr.slice(0, 500)}`, output, session_id: sessionId })
+        res({ directive: 'FAIL', reason: `claude exited ${code}: ${stderr.slice(0, 500)}`, output, session_id: sessionId })
       } else {
-        resolve({ directive: 'FAIL', reason: 'No DIRECTIVE line found in output', output, session_id: sessionId })
+        res({ directive: 'FAIL', reason: 'No DIRECTIVE found in output', output, session_id: sessionId })
       }
     })
 
     proc.on('error', (err) => {
-      reject(new Error(`Failed to spawn ${cliConfig.command}: ${err.message}`))
+      rej(new Error(`Failed to spawn claude: ${err.message}`))
     })
   })
 }
 
 function parseDirective(output: string): { directive: Directive; reason?: string; pr_url?: string; splits?: string[] } | null {
   const lines = output.split('\n').reverse()
+  let prUrl: string | undefined
 
   for (const line of lines) {
+    const prMatch = line.match(/^pr_url:\s*(.+)/i)
+    if (prMatch) prUrl = prMatch[1].trim()
+
     const match = line.match(/^DIRECTIVE:\s*(PASS|REJECT|FAIL|SPLIT)(?:\s+reason="([^"]*)")?/i)
     if (match) {
       const directive = match[1].toUpperCase() as Directive
       const reason = match[2] || undefined
 
       if (directive === 'SPLIT') {
-        const splits = parseSplits(output)
-        return { directive, reason, splits }
+        return { directive, reason, splits: parseSplits(output) }
       }
 
-      return { directive, reason }
-    }
-
-    const prMatch = line.match(/^pr_url:\s*(.+)/i)
-    if (prMatch) {
-      // Keep scanning for directive — pr_url is metadata, not the directive
+      return { directive, reason, pr_url: prUrl }
     }
   }
 
   return null
 }
 
-/** Merge multiple tool lists, deduped. */
-function dedupe(...lists: (string[] | undefined)[]): string[] {
-  const set = new Set<string>()
-  for (const list of lists) {
-    if (list) for (const item of list) set.add(item)
-  }
-  return [...set]
-}
-
-/** Resolve model intent (fast/balanced/powerful) to CLI-specific model name. */
-function resolveModel(intent: string, cliConfig: CliToolConfig): string | undefined {
-  if (!intent) return undefined
-  // If the CLI has a models map, look up the intent
-  if (cliConfig.models && cliConfig.models[intent]) {
-    return cliConfig.models[intent]
-  }
-  // No mapping — pass raw value through (could be a direct model name like "claude-sonnet-4-6")
-  return intent
-}
-
 function parseSplits(output: string): string[] {
-  const parts = output.split(/<!--\s*SPLIT\s*-->/)
-  return parts
+  return output.split(/<!--\s*SPLIT\s*-->/)
     .map(p => p.trim())
     .filter(p => p.length > 0 && !p.match(/^DIRECTIVE:\s*SPLIT/im))
     .map(p => p.replace(/\nDIRECTIVE:\s*SPLIT.*$/im, '').trim())

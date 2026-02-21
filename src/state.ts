@@ -1,70 +1,49 @@
-import { readdirSync, readFileSync, copyFileSync, renameSync, existsSync, mkdirSync } from 'fs'
+import { readdirSync, copyFileSync, existsSync, mkdirSync } from 'fs'
 import { resolve, basename } from 'path'
+import { execSync } from 'child_process'
 import chalk from 'chalk'
-import { loadConfig, loadPipeline, getRoot, getDefaultProject } from './config.js'
-import { getAllDirs } from './pipeline.js'
+import { PIPELINE_DIR, detectAgents, stageDir } from './config.js'
 import { parseWorkItem, updateFrontmatter } from './frontmatter.js'
-import { getAssignments } from './scheduler.js'
-import type { WorkItem, PipelineState, AgentStatus } from './types.js'
-
-export function getPipelineState(): PipelineState {
-  const root = getRoot()
-  const pipeline = loadPipeline()
-  const config = loadConfig()
-  const dirs = getAllDirs(pipeline)
-
-  const stages: Record<string, WorkItem[]> = {}
-  for (const dir of dirs) {
-    const dirPath = resolve(root, 'pipeline', dir)
-    stages[dir] = []
-    try {
-      const files = readdirSync(dirPath).filter(f => f.endsWith('.md'))
-      for (const file of files) {
-        try {
-          const { data } = parseWorkItem(resolve(dirPath, file))
-          stages[dir].push(data)
-        } catch { /* skip unparseable */ }
-      }
-    } catch { /* dir doesn't exist */ }
-  }
-
-  const assignments = getAssignments()
-  const agents: AgentStatus[] = Object.keys(config.agents).map(id => ({
-    id,
-    busy: assignments.has(id),
-    currentItem: assignments.get(id),
-  }))
-
-  return { stages, agents }
-}
+import { getLockInfo } from './claim.js'
+import { STAGES } from './types.js'
 
 export function printStatus() {
-  const root = getRoot()
-  const pipeline = loadPipeline()
-  const dirs = getAllDirs(pipeline)
+  const agents = detectAgents()
 
-  console.log(chalk.bold('\nPipeline Status\n'))
+  console.log(chalk.bold('\nAgents\n'))
+  for (const a of agents) {
+    const lock = findAgentLock(a.id)
+    const state = lock ? chalk.yellow(`busy: ${lock}`) : chalk.green('free')
+    const dirty = isRepoDirtyQuick(a.dir)
+    const dirtyTag = dirty ? chalk.red(' [dirty]') : ''
+    const role = a.role === 'planner' ? chalk.cyan('planner') : chalk.dim('executor')
+    console.log(`  ${a.id.padEnd(10)} ${role.padEnd(20)} ${state}${dirtyTag}`)
+  }
+
+  console.log(chalk.bold('\nPipeline\n'))
 
   let total = 0
-  for (const dir of dirs) {
-    const dirPath = resolve(root, 'pipeline', dir)
+  for (const stage of STAGES) {
+    const dir = stageDir(stage)
     let count = 0
     try {
-      count = readdirSync(dirPath).filter(f => f.endsWith('.md')).length
+      count = readdirSync(dir).filter(f => f.endsWith('.md')).length
     } catch { /* dir doesn't exist */ }
 
     total += count
-    const color = dir === 'done' ? chalk.green : dir === 'failed' ? chalk.red : count > 0 ? chalk.yellow : chalk.dim
-    console.log(color(`  ${dir.padEnd(15)} ${count} item${count !== 1 ? 's' : ''}`))
+    const color = stage === '5-Done' ? chalk.green
+      : stage === '4-Failures' ? chalk.red
+      : count > 0 ? chalk.yellow : chalk.dim
 
-    // Show individual items
+    console.log(color(`  ${stage.padEnd(15)} ${count} item${count !== 1 ? 's' : ''}`))
+
     if (count > 0) {
       try {
-        const files = readdirSync(dirPath).filter(f => f.endsWith('.md'))
+        const files = readdirSync(dir).filter(f => f.endsWith('.md'))
         for (const file of files) {
           try {
-            const { data } = parseWorkItem(resolve(dirPath, file))
-            const status = data.status === 'in_progress' ? chalk.blue('⟳') : chalk.dim('○')
+            const { data } = parseWorkItem(resolve(dir, file))
+            const status = data.status === 'in_progress' ? chalk.blue('~') : chalk.dim('o')
             const assignee = data.assignee ? chalk.dim(` [${data.assignee}]`) : ''
             console.log(`    ${status} ${data.title || file}${assignee}`)
           } catch { /* skip */ }
@@ -77,11 +56,10 @@ export function printStatus() {
 }
 
 export function injectItem(file: string) {
-  const root = getRoot()
   const src = resolve(process.cwd(), file)
-  const draftsDir = resolve(root, 'pipeline/drafts')
-  mkdirSync(draftsDir, { recursive: true })
-  const dest = resolve(draftsDir, basename(file))
+  const ideasDir = stageDir('1-Ideas')
+  mkdirSync(ideasDir, { recursive: true })
+  const dest = resolve(ideasDir, basename(file))
 
   if (!existsSync(src)) {
     console.error(chalk.red(`File not found: ${src}`))
@@ -90,109 +68,43 @@ export function injectItem(file: string) {
 
   copyFileSync(src, dest)
 
-  // Ensure frontmatter has required fields
+  // Ensure frontmatter
   try {
     const { data } = parseWorkItem(dest)
     const now = new Date().toISOString()
-    const config = loadConfig()
-    const defaults: Partial<WorkItem> = {
+    const defaults = {
       id: data.id || basename(file, '.md'),
-      project: data.project || getDefaultProject(config),
-      status: 'pending',
-      stage: 'drafts',
+      status: 'pending' as const,
+      stage: '1-Ideas',
       attempt: 1,
-      source: data.source || 'manual',
       created: data.created || now,
-      history: data.history || `drafts:${now}`,
+      history: data.history || `1-Ideas:${now}`,
       assignee: '',
     }
     updateFrontmatter(dest, { ...defaults, ...data } as any)
-  } catch {
-    // Not a valid frontmatter file — that's OK, planner will handle it
-  }
+  } catch { /* raw markdown is fine, planner handles it */ }
 
-  console.log(chalk.green(`Injected ${basename(file)} → pipeline/drafts/`))
+  console.log(chalk.green(`Injected ${basename(file)} → pipeline/1-Ideas/`))
 }
 
-export function tailLogs(target?: string) {
-  const root = getRoot()
-
-  if (!target) {
-    // Show all recent logs
-    const stageDir = resolve(root, 'logs/stages')
-    try {
-      const files = readdirSync(stageDir)
-      for (const f of files) {
-        console.log(chalk.bold(`\n--- ${f} ---`))
-        const content = readFileSync(resolve(stageDir, f), 'utf-8')
-        const lines = content.split('\n').slice(-20)
-        console.log(lines.join('\n'))
-      }
-    } catch {
-      console.log(chalk.dim('No logs yet.'))
-    }
-    return
-  }
-
-  // Try stage log first
-  const stageLog = resolve(root, 'logs/stages', `${target}.log`)
-  if (existsSync(stageLog)) {
-    const content = readFileSync(stageLog, 'utf-8')
-    const lines = content.split('\n').slice(-50)
-    console.log(lines.join('\n'))
-    return
-  }
-
-  // Try item log
-  const itemLog = resolve(root, 'logs/items', `${target}.log`)
-  if (existsSync(itemLog)) {
-    const content = readFileSync(itemLog, 'utf-8')
-    const lines = content.split('\n').slice(-50)
-    console.log(lines.join('\n'))
-    return
-  }
-
-  console.log(chalk.dim(`No logs found for: ${target}`))
-}
-
-export function retryItem(itemId: string) {
-  const root = getRoot()
-  const failedDir = resolve(root, 'pipeline/failed')
-
-  let found: string | null = null
+function findAgentLock(agentId: string): string | null {
+  const locksDir = resolve(PIPELINE_DIR, '..', 'locks')
+  if (!existsSync(locksDir)) return null
   try {
-    const files = readdirSync(failedDir).filter(f => f.endsWith('.md'))
+    const files = readdirSync(locksDir).filter(f => f.endsWith('.lock'))
     for (const f of files) {
-      if (f.includes(itemId)) {
-        found = f
-        break
-      }
+      const info = getLockInfo(f.replace('.lock', ''))
+      if (info?.agentId === agentId) return f.replace('.lock', '')
     }
   } catch { /* */ }
+  return null
+}
 
-  if (!found) {
-    console.error(chalk.red(`No failed item matching: ${itemId}`))
-    process.exit(1)
+function isRepoDirtyQuick(dir: string): boolean {
+  try {
+    const out = execSync('git status --porcelain', { cwd: dir, encoding: 'utf-8', timeout: 3000 })
+    return out.trim().length > 0
+  } catch {
+    return false
   }
-
-  const filePath = resolve(failedDir, found)
-  const { data } = parseWorkItem(filePath)
-
-  // Parse history to find last non-failed stage
-  const historyParts = (data.history || '').split(',').map(s => s.trim())
-  let targetStage = 'drafts' // default fallback
-  for (const part of historyParts.reverse()) {
-    const stage = part.split('→')[0].split(':')[0]
-    if (stage && stage !== 'failed') {
-      targetStage = stage
-      break
-    }
-  }
-
-  // Move back
-  updateFrontmatter(filePath, { status: 'pending', stage: targetStage, assignee: '' } as any)
-  const targetPath = resolve(root, 'pipeline', targetStage, found)
-  renameSync(filePath, targetPath)
-
-  console.log(chalk.green(`Retrying ${found} → ${targetStage}/`))
 }
