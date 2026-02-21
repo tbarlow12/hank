@@ -8,7 +8,7 @@ import type { Directive } from './types.js'
 import { logStage, logItem } from './logger.js'
 
 // Fixed transitions for 3-stage pipeline
-const TRANSITIONS: Record<string, Record<string, string>> = {
+export const TRANSITIONS: Record<string, Record<string, string>> = {
   '1-Ideas': { PASS: '2-Plans', SPLIT: '2-Plans', FAIL: '4-Failures', REJECT: '4-Failures' },
   '2-Plans': { PASS: '3-Work', FAIL: '4-Failures', REJECT: '1-Ideas' },
   '3-Work':  { PASS: '5-Done', FAIL: '4-Failures', REJECT: '2-Plans' },

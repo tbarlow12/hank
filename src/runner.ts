@@ -1,9 +1,12 @@
 import { spawn } from 'child_process'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import chalk from 'chalk'
 import { ROOT, PLANNER_MODEL, EXECUTOR_MODEL } from './config.js'
 import { parseWorkItem } from './frontmatter.js'
 import type { Agent, RunResult, Directive } from './types.js'
+
+const burntOrange = chalk.hex('#CC5500')
 
 export async function runAgent(
   workItemPath: string,
@@ -20,7 +23,7 @@ export async function runAgent(
 
   const model = agent.role === 'planner' ? PLANNER_MODEL : EXECUTOR_MODEL
 
-  return invokeClaude(systemPromptFile, workItemContent, model, agent.dir, resumeSessionId)
+  return invokeClaude(systemPromptFile, workItemContent, model, agent.dir, resumeSessionId, agent.id)
 }
 
 async function invokeClaude(
@@ -29,6 +32,7 @@ async function invokeClaude(
   model: string,
   cwd: string,
   resumeSessionId?: string,
+  agentId?: string,
 ): Promise<RunResult> {
   const args = ['--print', '--output-format', 'json']
 
@@ -53,14 +57,23 @@ async function invokeClaude(
     let stdout = ''
     let stderr = ''
 
+    const prefix = agentId ? `[${agentId}] ` : ''
+    let stderrBuf = ''
+
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
     proc.stderr.on('data', (chunk: Buffer) => {
-      const line = chunk.toString()
-      stderr += line
-      process.stderr.write(line) // stream stderr for visibility
+      const text = chunk.toString()
+      stderr += text
+      stderrBuf += text
+      const lines = stderrBuf.split('\n')
+      stderrBuf = lines.pop()!
+      for (const line of lines) {
+        if (line) process.stderr.write(burntOrange(`${prefix}${line}`) + '\n')
+      }
     })
 
     proc.on('close', (code) => {
+      if (stderrBuf) process.stderr.write(burntOrange(`${prefix}${stderrBuf}`) + '\n')
       let output = stdout.trim()
       let sessionId: string | undefined
 
@@ -86,7 +99,7 @@ async function invokeClaude(
   })
 }
 
-function parseDirective(output: string): { directive: Directive; reason?: string; pr_url?: string; splits?: string[] } | null {
+export function parseDirective(output: string): { directive: Directive; reason?: string; pr_url?: string; splits?: string[] } | null {
   const lines = output.split('\n').reverse()
   let prUrl: string | undefined
 
@@ -110,10 +123,10 @@ function parseDirective(output: string): { directive: Directive; reason?: string
   return null
 }
 
-function parseSplits(output: string): string[] {
+export function parseSplits(output: string): string[] {
   return output.split(/<!--\s*SPLIT\s*-->/)
     .map(p => p.trim())
-    .filter(p => p.length > 0 && !p.match(/^DIRECTIVE:\s*SPLIT/im))
+    .filter(p => p.length > 0 && !p.match(/^DIRECTIVE:\s*SPLIT/i))
     .map(p => p.replace(/\nDIRECTIVE:\s*SPLIT.*$/im, '').trim())
     .filter(p => p.length > 0)
 }
